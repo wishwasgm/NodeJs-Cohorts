@@ -9,7 +9,10 @@ var express = require('express'),
   fs = require('fs'),
   fileUpload = require('express-fileupload'),
   swaggerDocument = require('./swagger.json'),
-  readline = require('readline');
+  paginate = require("paginate-array"),
+  hateoasLinker = require('express-hateoas-links');
+
+var customersMap = {};
 
 var app = express();
 
@@ -19,59 +22,81 @@ app.use(bodyParser.urlencoded({
 }));
 app.use(bodyParser.json());
 app.use(fileUpload());
+app.use(hateoasLinker);
 
 //middleware for create
 var getCohorts = function (req, res, next) {
-  fs.readFile('DATA', 'utf8', function (err, contents) {
-    console.log(contents);
-  });
-  res.json("Not yet implemented").status(501);
+
+  if (Object.keys(customersMap).length === 0) {
+    return res.json("No results available");
+  }
+  let currentFullURL = `${req.protocol}://${req.get('host')}${req.baseUrl}${req.path}`;
+  let currentPage = parseInt(req.query.page) || 1;
+  let currentlimit = parseInt(req.query.limit) || 10;
+  let paginatedResult = paginate(Object.values(customersMap), currentPage, currentlimit);
+
+  let processedResult = [];
+  
+  // for (let resu of paginatedResult.data) {
+  //   resu["activityDates"]
+  // }
+ 
+
+
+  res.json(paginatedResult, [
+    { rel: "self", method: "GET", href: `${currentFullURL}?page=${currentPage}&limit=${currentlimit}` },
+    { rel: "previous", method: "GET", href: `${currentFullURL}?page=${currentPage == 1 ? paginatedResult.totalPages : currentPage - 1}&limit=${currentlimit}` },
+    { rel: "next", method: "GET", href: `${currentFullURL}?page=${currentPage == paginatedResult.totalPages ? 1 : currentPage + 1}&limit=${currentlimit}` }
+  ]);
 };
 
+function getDiffInDays(d1, d2) {
+  if (d1 && d2) {
+    var milliSecInDay = 24 * 60 * 60 * 1000;
+    return parseInt((+d2 - +d1) / milliSecInDay);
+  }
+}
+
+
 var processCohorts = function (req, res, next) {
-  debugger;
   if (Object.keys(req.files).length == 0) {
     return res.status(400).send('No files were uploaded 1.');
   }
 
   // The name of the input field (i.e. "sampleFile") is used to retrieve the uploaded file
-  let sampleFile = req.files.ordersFile;
+  let customerFile = req.files.customersFile;
+  let ordersFile = req.files.ordersFile;
+  let lineContents = customerFile.data.toString('utf8').split('\n');
+  let orderContents = ordersFile.data.toString('utf8').split('\n');
 
-  // fs.createReadStream(sampleFile.data)
-  //   .on('data', function (data) {
-  //     debugger;
-  //     try {
-  //       data = data.split("\n");
-  //       console.log(`data`);
-  //       res.status(201).send('Files were uploaded 2.');
-  //     }
-  //     catch (err) {
-  //       console.log(err);
-  //     }
-  //   })
-  //   .on('end', function () {
-  //     res.send('File uploaded!');
-  //   })
-  //   .on('error', (err) => res.status(500).send('Files were uploaded 3. : ' + err));
+  for (let line of lineContents) {
+    let custData = line.split(',');
+    if (!customersMap[custData[0]]) {
+      let actDates = [];
+      actDates.push(custData[1]);
+      customersMap[custData[0]] = {
+        "custId": custData[0],
+        "regDate": custData[1],
+        "activityDates": actDates
+      }
+    } else {
+      customersMap[custData[0]]["activityDates"].push(custData[1]);
+    }
+  }
 
-  var lineReader = readline.createInterface({
-    input: require('fs').createReadStream(sampleFile.data)
-  });
-  
-  lineReader.on('line', function (line) {
-    console.log('Line from file:', line);
-  });
+  for (let ordersLine of orderContents) {
 
-  // Use the mv() method to place the file somewhere on your server
-  // sampleFile.mv('./uploads/' + sampleFile.name, function (err) {
-  //   if (err)
-  //     return res.status(500).send(err);
+    let order = ordersLine.split(',');
+    if (order[0] !== "id") {
+      if (customersMap[order[2]]) {
+        customersMap[order[2]]["activityDates"].push(order[3]);
+      }
+    }
 
-  //   res.send('File uploaded!');
-  // });
+  }
+
+  res.send(paginate(Object.values(customersMap), req.query.page || 1, req.query.limit || 10));
 };
-
-
 
 router.route('/cohorts')
   .post(processCohorts)
