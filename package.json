@@ -9,11 +9,10 @@
   "author": "Wishwas Mohan",
   "license": "ISC",
   "dependencies": {
-    "csv-parser": "^2.2.0",
     "express": "^4.16.4",
     "express-hateoas-links": "^1.1.0",
-    "multer": "^1.4.1",
     "paginate-array": "^2.1.0",
+    "sort-object": "^3.0.2",
     "swagger-ui-express": "^4.0.2"
   },
   "devDependencies": {

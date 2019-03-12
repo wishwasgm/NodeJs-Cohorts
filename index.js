@@ -13,6 +13,8 @@ var express = require('express'),
   hateoasLinker = require('express-hateoas-links');
 
 var customersMap = {};
+var ordersMap = {};
+let cohorts = [];
 
 var app = express();
 
@@ -35,28 +37,12 @@ var getCohorts = function (req, res, next) {
   let currentlimit = parseInt(req.query.limit) || 10;
   let paginatedResult = paginate(Object.values(customersMap), currentPage, currentlimit);
 
-  let processedResult = [];
-  
-  // for (let resu of paginatedResult.data) {
-  //   resu["activityDates"]
-  // }
- 
-
-
   res.json(paginatedResult, [
     { rel: "self", method: "GET", href: `${currentFullURL}?page=${currentPage}&limit=${currentlimit}` },
     { rel: "previous", method: "GET", href: `${currentFullURL}?page=${currentPage == 1 ? paginatedResult.totalPages : currentPage - 1}&limit=${currentlimit}` },
     { rel: "next", method: "GET", href: `${currentFullURL}?page=${currentPage == paginatedResult.totalPages ? 1 : currentPage + 1}&limit=${currentlimit}` }
   ]);
 };
-
-function getDiffInDays(d1, d2) {
-  if (d1 && d2) {
-    var milliSecInDay = 24 * 60 * 60 * 1000;
-    return parseInt((+d2 - +d1) / milliSecInDay);
-  }
-}
-
 
 var processCohorts = function (req, res, next) {
   if (Object.keys(req.files).length == 0) {
@@ -68,6 +54,7 @@ var processCohorts = function (req, res, next) {
   let ordersFile = req.files.ordersFile;
   let lineContents = customerFile.data.toString('utf8').split('\n');
   let orderContents = ordersFile.data.toString('utf8').split('\n');
+  var orderedDates = [];
 
   for (let line of lineContents) {
     let custData = line.split(',');
@@ -87,16 +74,88 @@ var processCohorts = function (req, res, next) {
   for (let ordersLine of orderContents) {
 
     let order = ordersLine.split(',');
+
     if (order[0] !== "id") {
       if (customersMap[order[2]]) {
         customersMap[order[2]]["activityDates"].push(order[3]);
+      }
+      orderedDates.push(new Date(order[3]));
+      if (!ordersMap[new Date(order[3]).toLocaleDateString()]) {
+        let ordersCustomers = new Set();
+        ordersCustomers.add(order[2]);
+        ordersMap[new Date(order[3])] = {
+          "date": new Date(order[3]),
+          "customers": [...ordersCustomers]
+        }
+      } else {
+        ordersMap[new Date(order[3])]["customers"].push(order[2]);
       }
     }
 
   }
 
-  res.send(paginate(Object.values(customersMap), req.query.page || 1, req.query.limit || 10));
+  let x = orderedDates.sort(function (d1, d2) {
+
+    var t2 = new Date(d2).getTime();
+    var t1 = new Date(d1).getTime();
+
+    return parseInt((t1 - t2) / (24 * 3600 * 1000)) > 0 ? 1 : -1;
+
+
+  });
+  
+  let startDate = x[0];
+  let endDate = x[x.length - 3];
+  let currentDate = startDate;
+  while (currentDate <= endDate) {
+    currentDate = addDays(currentDate);
+    cohorts.push({
+      "start": `${currentDate}`,
+      "end": `${addDays(currentDate, 6)}`,
+      "count": 0,
+      "customers": []
+    });
+
+  }
+
+  let cohortIndex = 0;
+
+  for (let i = 0; i < x.length; i++) {
+    try {
+      if (ordersMap[x[i]].date.getTime() <= new Date(cohorts[cohortIndex].end).getTime()) {
+        cohorts[cohortIndex].count += 1;
+        cohorts[cohortIndex].customers = cohorts[cohortIndex].customers.concat(ordersMap[x[i]].customers);
+      } else {
+        cohortIndex++;
+        cohorts[cohortIndex].count += 1;
+        cohorts[cohortIndex].customers = cohorts[cohortIndex].customers.concat(ordersMap[x[i]].customers);
+      }
+
+    } catch (e) {
+      console.log(e);
+    }
+  }
+
+    res.send(cohorts);
 };
+
+var dateDiff = function (d1, d2) {
+
+  var t2 = new Date(d2).getTime();
+  var t1 = new Date(d1).getTime();
+
+  return parseInt((t1 - t2) / (24 * 3600 * 1000));
+
+
+};
+
+const addDays = function (date, days = 7) {
+  var date = new Date(date);
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
+
 
 router.route('/cohorts')
   .post(processCohorts)
